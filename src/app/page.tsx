@@ -16,8 +16,8 @@ interface Coin {
   price_change_percentage_24h_in_currency: number | null;
   price_change_percentage_7d_in_currency: number | null;
   sparkline_in_7d?: { price: number[] };
-  price_change_15m: number | null;   // ← changed to null
-  price_change_4h: number | null;    // ← changed to null
+  price_change_15m: number | null;
+  price_change_4h: number | null;
   market_cap_rank: number;
 }
 
@@ -73,8 +73,8 @@ export default function BitEyeScanner() {
           const prices = coin.sparkline_in_7d?.price || [];
           const nowPrice = coin.current_price;
 
-          const price15mAgo = prices[prices.length - 15] || nowPrice;
-          const price4hAgo = prices[prices.length - 34] || prices[prices.length - 30] || nowPrice;
+          const price15mAgo = prices[prices.length - 15] ?? nowPrice;
+          const price4hAgo = prices[prices.length - 34] ?? prices[prices.length - 30] ?? nowPrice;
 
           const change15m = price15mAgo > 0 ? ((nowPrice - price15mAgo) / price15mAgo) * 100 : null;
           const change4h = price4hAgo > 0 ? ((nowPrice - price4hAgo) / price4hAgo) * 100 : null;
@@ -86,7 +86,7 @@ export default function BitEyeScanner() {
           };
         });
 
-      setCoins(allCoins);
+      setCoins(allCoins as Coin[]);
       setLastUpdate(new Date());
       setLoading(false);
     } catch (err) {
@@ -103,18 +103,20 @@ export default function BitEyeScanner() {
 
   const sortedCoins = useMemo(() => {
     return [...coins].sort((a, b) => {
-      let aVal: any = 0, bVal: any = 0;
+      let aVal: number | null = 0;
+      let bVal: number | null = 0;
       switch (sortKey) {
-        case 'rank':       aVal = a.market_cap_rank; bVal = b.market_cap_rank; break;
-        case 'price':      aVal = a.current_price; bVal = b.current_price; break;
-        case '15m':        aVal = a.price_change_15m ?? -Infinity; bVal = b.price_change_15m ?? -Infinity; break;
-        case '1h':         aVal = a.price_change_percentage_1h_in_currency ?? -Infinity; bVal = b.price_change_percentage_1h_in_currency ?? -Infinity; break;
-        case '4h':         aVal = a.price_change_4h ?? -Infinity; bVal = b.price_change_4h ?? -Infinity; break;
-        case '24h':        aVal = a.price_change_percentage_24h_in_currency ?? -Infinity; bVal = b.price_change_percentage_24h_in_currency ?? -Infinity; break;
-        case '7d':         aVal = a.price_change_percentage_7d_in_currency ?? -Infinity; bVal = b.price_change_percentage_7d_in_currency ?? -Infinity; break;
+        case 'rank': aVal = a.market_cap_rank; bVal = b.market_cap_rank; break;
+        case 'price': aVal = a.current_price; bVal = b.current_price; break;
+        case '15m': aVal = a.price_change_15m ?? -Infinity; bVal = b.price_change_15m ?? -Infinity; break;
+        case '1h': aVal = a.price_change_percentage_1h_in_currency ?? -Infinity; bVal = b.price_change_percentage_1h_in_currency ?? -Infinity; break;
+        case '4h': aVal = a.price_change_4h ?? -Infinity; bVal = b.price_change_4h ?? -Infinity; break;
+        case '24h': aVal = a.price_change_percentage_24h_in_currency ?? -Infinity; bVal = b.price_change_percentage_24h_in_currency ?? -Infinity; break;
+        case '7d': aVal = a.price_change_percentage_7d_in_currency ?? -Infinity; bVal = b.price_change_percentage_7d_in_currency ?? -Infinity; break;
         case 'market_cap': aVal = a.market_cap; bVal = b.market_cap; break;
-        case 'volume':     aVal = a.total_volume; bVal = b.total_volume; break;
+        case 'volume': aVal = a.total_volume; bVal = b.total_volume; break;
       }
+      if (aVal === bVal) return 0;
       return sortOrder === 'asc' ? (aVal > bVal ? 1 : -1) : (aVal < bVal ? 1 : -1);
     });
   }, [coins, sortKey, sortOrder]);
@@ -267,7 +269,7 @@ export default function BitEyeScanner() {
           </div>
 
           <div className="mt-6 text-center text-xs text-gray-500 dark:text-gray-400">
-            Data: CoinGecko • 15m & 4h live • Instant • Sweden
+            Data: CoinGecko • 15m & 4h live from sparkline • Instant • Sweden
           </div>
         </div>
       </div>
