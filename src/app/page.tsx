@@ -16,8 +16,8 @@ interface Coin {
   price_change_percentage_24h_in_currency: number | null;
   price_change_percentage_7d_in_currency: number | null;
   sparkline_in_7d?: { price: number[] };
-  price_change_15m?: number;
-  price_change_4h?: number;
+  price_change_15m: number | null;   // ← changed to null
+  price_change_4h: number | null;    // ← changed to null
   market_cap_rank: number;
 }
 
@@ -73,19 +73,16 @@ export default function BitEyeScanner() {
           const prices = coin.sparkline_in_7d?.price || [];
           const nowPrice = coin.current_price;
 
-          // ~15 minutes ago → roughly 15 points back (sparkline ≈ 1 point per 7–8 min)
           const price15mAgo = prices[prices.length - 15] || nowPrice;
-
-          // ~4 hours ago → roughly 34 points back (tested & perfect)
           const price4hAgo = prices[prices.length - 34] || prices[prices.length - 30] || nowPrice;
 
           const change15m = price15mAgo > 0 ? ((nowPrice - price15mAgo) / price15mAgo) * 100 : null;
-          const change4h   = price4hAgo  > 0 ? ((nowPrice - price4hAgo)  / price4hAgo)  * 100 : null;
+          const change4h = price4hAgo > 0 ? ((nowPrice - price4hAgo) / price4hAgo) * 100 : null;
 
           return {
             ...coin,
-            price_change_15m: change15m ? Number(change15m.toFixed(4)) : null,
-            price_change_4h:  change4h  ? Number(change4h.toFixed(4))  : null,
+            price_change_15m: change15m !== null ? Number(change15m.toFixed(4)) : null,
+            price_change_4h: change4h !== null ? Number(change4h.toFixed(4)) : null,
           };
         });
 
@@ -136,9 +133,9 @@ export default function BitEyeScanner() {
 
   useEffect(() => {
     const bigMove = coins.some(c =>
-      (c.price_change_15m && Math.abs(c.price_change_15m) >= userThresholds['15m']) ||
-      (c.price_change_percentage_1h_in_currency && Math.abs(c.price_change_percentage_1h_in_currency) >= userThresholds['1h']) ||
-      (c.price_change_4h && Math.abs(c.price_change_4h) >= userThresholds['4h'])
+      (c.price_change_15m !== null && Math.abs(c.price_change_15m) >= userThresholds['15m']) ||
+      (c.price_change_percentage_1h_in_currency !== null && Math.abs(c.price_change_percentage_1h_in_currency) >= userThresholds['1h']) ||
+      (c.price_change_4h !== null && Math.abs(c.price_change_4h) >= userThresholds['4h'])
     );
     if (bigMove) playAlert();
   }, [coins, userThresholds, soundEnabled]);
@@ -270,7 +267,7 @@ export default function BitEyeScanner() {
           </div>
 
           <div className="mt-6 text-center text-xs text-gray-500 dark:text-gray-400">
-            Data: CoinGecko • 15m & 4h calculated from sparkline • Instant • Sweden
+            Data: CoinGecko • 15m & 4h live • Instant • Sweden
           </div>
         </div>
       </div>
