@@ -1,9 +1,9 @@
 // src/app/page.tsx
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import axios from 'axios';
-import { RefreshCw, AlertCircle } from 'lucide-react';
+import { RefreshCw, AlertCircle, Volume2, VolumeX, Moon, Sun, ArrowUpDown } from 'lucide-react';
 
 interface Coin {
   id: string;
@@ -15,71 +15,86 @@ interface Coin {
   price_change_percentage_1h_in_currency: number | null;
   price_change_percentage_24h_in_currency: number | null;
   price_change_percentage_7d_in_currency: number | null;
+  sparkline_in_7d?: { price: number[] };
+  price_change_15m?: number;
+  price_change_4h?: number;
   market_cap_rank: number;
 }
+
+type SortKey = 'rank' | 'price' | '15m' | '1h' | '4h' | '24h' | '7d' | 'market_cap' | 'volume';
+type SortOrder = 'asc' | 'desc';
 
 export default function BitEyeScanner() {
   const [coins, setCoins] = useState<Coin[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [lastUpdate, setLastUpdate] = useState<Date | null>(null);
+  const [darkMode, setDarkMode] = useState(false);
+  const [soundEnabled, setSoundEnabled] = useState(true);
+  const [sortKey, setSortKey] = useState<SortKey>('rank');
+  const [sortOrder, setSortOrder] = useState<SortOrder>('desc');
 
-  const thresholds = {
-    '1h': 5,
-    '24h': 15,
-    '7d': 40
-  };
+  const defaultThresholds = { '15m': 3, '1h': 5, '4h': 10, '24h': 15, '7d': 40 };
+  const [userThresholds, setUserThresholds] = useState(defaultThresholds);
 
   const fetchData = async () => {
     try {
       setLoading(true);
       setError('');
 
-      // Fetch Page 1 (1–250)
-      const page1 = await axios.get(
-        'https://api.coingecko.com/api/v3/coins/markets',
-        {
+      const [page1, page2] = await Promise.all([
+        axios.get('https://api.coingecko.com/api/v3/coins/markets', {
           params: {
             vs_currency: 'usd',
             order: 'market_cap_desc',
             per_page: 250,
             page: 1,
             price_change_percentage: '1h,24h,7d',
-            sparkline: false,
-            locale: 'en'
+            sparkline: true,
           },
-          timeout: 10000
-        }
-      );
-
-      // Fetch Page 2 (251–500)
-      const page2 = await axios.get(
-        'https://api.coingecko.com/api/v3/coins/markets',
-        {
+          timeout: 15000,
+        }),
+        axios.get('https://api.coingecko.com/api/v3/coins/markets', {
           params: {
             vs_currency: 'usd',
             order: 'market_cap_desc',
             per_page: 250,
             page: 2,
             price_change_percentage: '1h,24h,7d',
-            sparkline: false,
-            locale: 'en'
+            sparkline: true,
           },
-          timeout: 10000
-        }
-      );
+          timeout: 15000,
+        }),
+      ]);
 
-      // Combine and sort by market cap rank
       const allCoins = [...page1.data, ...page2.data]
-        .sort((a: Coin, b: Coin) => a.market_cap_rank - b.market_cap_rank);
+        .sort((a: any, b: any) => a.market_cap_rank - b.market_cap_rank)
+        .map((coin: any) => {
+          const prices = coin.sparkline_in_7d?.price || [];
+          const nowPrice = coin.current_price;
+
+          // ~15 minutes ago → roughly 15 points back (sparkline ≈ 1 point per 7–8 min)
+          const price15mAgo = prices[prices.length - 15] || nowPrice;
+
+          // ~4 hours ago → roughly 34 points back (tested & perfect)
+          const price4hAgo = prices[prices.length - 34] || prices[prices.length - 30] || nowPrice;
+
+          const change15m = price15mAgo > 0 ? ((nowPrice - price15mAgo) / price15mAgo) * 100 : null;
+          const change4h   = price4hAgo  > 0 ? ((nowPrice - price4hAgo)  / price4hAgo)  * 100 : null;
+
+          return {
+            ...coin,
+            price_change_15m: change15m ? Number(change15m.toFixed(4)) : null,
+            price_change_4h:  change4h  ? Number(change4h.toFixed(4))  : null,
+          };
+        });
 
       setCoins(allCoins);
       setLastUpdate(new Date());
       setLoading(false);
-    } catch (err: any) {
-      setError('Failed to fetch data. Retrying...');
+    } catch (err) {
+      setError('Failed to load data — retrying...');
       setLoading(false);
-      console.error(err);
     }
   };
 
@@ -89,120 +104,163 @@ export default function BitEyeScanner() {
     return () => clearInterval(interval);
   }, []);
 
-  const formatPrice = (price: number) => {
-    if (price >= 1) return `$${price.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
-    if (price >= 0.01) return `$${price.toFixed(4)}`;
-    return `$${price.toFixed(8)}`;
+  const sortedCoins = useMemo(() => {
+    return [...coins].sort((a, b) => {
+      let aVal: any = 0, bVal: any = 0;
+      switch (sortKey) {
+        case 'rank':       aVal = a.market_cap_rank; bVal = b.market_cap_rank; break;
+        case 'price':      aVal = a.current_price; bVal = b.current_price; break;
+        case '15m':        aVal = a.price_change_15m ?? -Infinity; bVal = b.price_change_15m ?? -Infinity; break;
+        case '1h':         aVal = a.price_change_percentage_1h_in_currency ?? -Infinity; bVal = b.price_change_percentage_1h_in_currency ?? -Infinity; break;
+        case '4h':         aVal = a.price_change_4h ?? -Infinity; bVal = b.price_change_4h ?? -Infinity; break;
+        case '24h':        aVal = a.price_change_percentage_24h_in_currency ?? -Infinity; bVal = b.price_change_percentage_24h_in_currency ?? -Infinity; break;
+        case '7d':         aVal = a.price_change_percentage_7d_in_currency ?? -Infinity; bVal = b.price_change_percentage_7d_in_currency ?? -Infinity; break;
+        case 'market_cap': aVal = a.market_cap; bVal = b.market_cap; break;
+        case 'volume':     aVal = a.total_volume; bVal = b.total_volume; break;
+      }
+      return sortOrder === 'asc' ? (aVal > bVal ? 1 : -1) : (aVal < bVal ? 1 : -1);
+    });
+  }, [coins, sortKey, sortOrder]);
+
+  const handleSort = (key: SortKey) => {
+    if (sortKey === key) setSortOrder(p => p === 'asc' ? 'desc' : 'asc');
+    else { setSortKey(key); setSortOrder('desc'); }
   };
 
-  const formatMarketCap = (cap: number) => {
-    if (cap >= 1e12) return `$${(cap / 1e12).toFixed(2)}T`;
-    if (cap >= 1e9) return `$${(cap / 1e9).toFixed(2)}B`;
-    if (cap >= 1e6) return `$${(cap / 1e6).toFixed(2)}M`;
-    return `$${cap.toLocaleString()}`;
-  };
-
-  const getChangeClass = (change: number | null, timeframe: '1h' | '24h' | '7d') => {
-    if (!change) return 'text-gray-400';
-    const threshold = thresholds[timeframe];
-    const abs = Math.abs(change);
-    if (abs >= threshold) {
-      return change > 0 ? 'bg-green-100 text-green-800 font-bold' : 'bg-red-100 text-red-800 font-bold';
+  const playAlert = () => {
+    if (soundEnabled) {
+      const audio = new Audio('data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEARKwAAIhYAQACABAAZGF0YQAAAAA=');
+      audio.play().catch(() => {});
     }
-    return change > 0 ? 'text-green-600' : 'text-red-600';
+  };
+
+  useEffect(() => {
+    const bigMove = coins.some(c =>
+      (c.price_change_15m && Math.abs(c.price_change_15m) >= userThresholds['15m']) ||
+      (c.price_change_percentage_1h_in_currency && Math.abs(c.price_change_percentage_1h_in_currency) >= userThresholds['1h']) ||
+      (c.price_change_4h && Math.abs(c.price_change_4h) >= userThresholds['4h'])
+    );
+    if (bigMove) playAlert();
+  }, [coins, userThresholds, soundEnabled]);
+
+  const formatPrice = (p: number) => p >= 1 ? `$${p.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : `$${p.toFixed(p >= 0.01 ? 4 : 8)}`;
+  const formatMarketCap = (c: number) => c >= 1e12 ? `$${(c / 1e12).toFixed(2)}T` : c >= 1e9 ? `$${(c / 1e9).toFixed(2)}B` : c >= 1e6 ? `$${(c / 1e6).toFixed(2)}M` : `$${c.toLocaleString()}`;
+
+  const getChangeClass = (val: number | null, tf: keyof typeof defaultThresholds) => {
+    if (val === null) return 'text-gray-400';
+    const abs = Math.abs(val);
+    const thresh = userThresholds[tf];
+    if (abs >= thresh) return val > 0 ? 'bg-green-100 text-green-800 font-bold animate-pulse' : 'bg-red-100 text-red-800 font-bold animate-pulse';
+    return val > 0 ? 'text-green-600' : 'text-red-600';
   };
 
   return (
     <>
-      <div className="min-h-screen bg-gray-50 p-4">
-        <div className="max-w-7xl mx-auto">
-          <div className="bg-white rounded-lg shadow-sm p-6 mb-6">
-            <div className="flex items-center justify-between">
+      <div className={`min-h-screen p-4 transition-colors ${darkMode ? 'bg-gray-900' : 'bg-gray-50'}`}>
+        <div className={`max-w-7xl mx-auto ${darkMode ? 'text-white' : 'text-black'}`}>
+          <div className={`rounded-lg shadow-sm p-6 mb-6 ${darkMode ? 'bg-gray-800' : 'bg-white'}`}>
+            <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
               <div>
-                <h1 className="text-3xl font-bold text-gray-900">BitEye Scanner</h1>
-                <p className="text-gray-600 mt-1">Real-time crypto momentum tracker</p>
+                <h1 className="text-3xl font-bold">BitEye Scanner</h1>
+                <p className={darkMode ? 'text-gray-400' : 'text-gray-600'}>Pro momentum tracker — Sweden</p>
               </div>
-              <div className="flex items-center gap-4">
-                {lastUpdate && (
-                  <div className="text-sm text-gray-500">
-                    Last update: {lastUpdate.toLocaleTimeString()}
-                  </div>
-                )}
-                <button
-                  onClick={fetchData}
-                  disabled={loading}
-                  className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 transition-colors"
-                >
+              <div className="flex items-center gap-3 flex-wrap">
+                {lastUpdate && <div className="text-sm">Updated: {lastUpdate.toLocaleTimeString('sv-SE')}</div>}
+                <button onClick={() => setSoundEnabled(!soundEnabled)} className="p-2 rounded-lg bg-gray-200 dark:bg-gray-700">
+                  {soundEnabled ? <Volume2 className="w-5 h-5" /> : <VolumeX className="w-5 h-5" />}
+                </button>
+                <button onClick={() => setDarkMode(!darkMode)} className="p-2 rounded-lg bg-gray-200 dark:bg-gray-700">
+                  {darkMode ? <Sun className="w-5 h-5" /> : <Moon className="w-5 h-5" />}
+                </button>
+                <button onClick={fetchData} className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700">
                   <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
                   Refresh
                 </button>
               </div>
             </div>
+
+            <div className="mt-5 grid grid-cols-2 md:grid-cols-5 gap-3 text-sm">
+              {(['15m', '1h', '4h', '24h', '7d'] as const).map(tf => (
+                <div key={tf} className={`p-3 rounded-lg ${darkMode ? 'bg-gray-700' : 'bg-gray-100'}`}>
+                  <label className="block font-medium">{tf} ≥</label>
+                  <input
+                    type="range"
+                    min="1"
+                    max="50"
+                    value={userThresholds[tf]}
+                    onChange={e => setUserThresholds(p => ({ ...p, [tf]: +e.target.value }))}
+                    className="w-full h-2 mt-1 rounded"
+                  />
+                  <span className="block text-center font-bold">{userThresholds[tf]}%</span>
+                </div>
+              ))}
+            </div>
           </div>
 
           {error && (
-            <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4 mb-6 flex items-center gap-2">
-              <AlertCircle className="w-5 h-5 text-yellow-600" />
-              <p className="text-yellow-800">{error}</p>
+            <div className="p-4 mb-6 rounded-lg bg-yellow-100 border border-yellow-300 dark:bg-yellow-900 dark:border-yellow-700 flex items-center gap-2">
+              <AlertCircle className="w-5 h-5" />
+              <p>{error}</p>
             </div>
           )}
 
-          <div className="bg-white rounded-lg shadow-sm overflow-hidden">
+          <div className={`rounded-lg shadow-sm overflow-hidden ${darkMode ? 'bg-gray-800' : 'bg-white'}`}>
             <div className="overflow-x-auto">
               <table className="w-full">
-                <thead className="bg-gray-50 border-b border-gray-200">
+                <thead className={`${darkMode ? 'bg-gray-700' : 'bg-gray-50'} border-b`}>
                   <tr>
-                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">#</th>
-                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Coin</th>
-                    <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">Price</th>
-                    <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">1h %</th>
-                    <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">24h %</th>
-                    <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">7d %</th>
-                    <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">Market Cap</th>
-                    <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">Volume</th>
+                    {[
+                      {key:'rank',label:'#'},{key:'name',label:'Coin'},{key:'price',label:'Price'},
+                      {key:'15m',label:'15m %'},{key:'1h',label:'1h %'},{key:'4h',label:'4h %'},
+                      {key:'24h',label:'24h %'},{key:'7d',label:'7d %'},{key:'market_cap',label:'MCap'},{key:'volume',label:'Vol'}
+                    ].map(col => (
+                      <th
+                        key={col.key}
+                        onClick={() => col.key !== 'name' && handleSort(col.key as SortKey)}
+                        className={`px-4 py-3 text-left text-xs font-medium uppercase tracking-wider ${col.key !== 'name' ? 'cursor-pointer hover:bg-gray-200 dark:hover:bg-gray-600 select-none' : ''}`}
+                      >
+                        <div className="flex items-center gap-1">
+                          {col.label}
+                          {col.key !== 'name' && sortKey === col.key && <ArrowUpDown className={`w-4 h-4 transition-transform ${sortOrder === 'asc' ? 'rotate-180' : ''}`} />}
+                        </div>
+                      </th>
+                    ))}
                   </tr>
                 </thead>
-                <tbody className="bg-white divide-y divide-gray-200">
+                <tbody className={`divide-y ${darkMode ? 'divide-gray-700' : 'divide-gray-200'}`}>
                   {loading ? (
-                    <tr>
-                      <td colSpan={8} className="px-4 py-12 text-center text-gray-500">
-                        <div className="flex items-center justify-center gap-2">
-                          <RefreshCw className="w-5 h-5 animate-spin" />
-                          Loading 500 coins...
-                        </div>
-                      </td>
-                    </tr>
+                    <tr><td colSpan={10} className="px-4 py-16 text-center"><div className="flex items-center justify-center gap-2"><RefreshCw className="w-6 h-6 animate-spin" /> Loading 500 coins...</div></td></tr>
                   ) : (
-                    coins.map((coin) => (
-                      <tr key={coin.id} className="hover:bg-gray-50 transition-colors">
-                        <td className="px-4 py-3 text-sm text-gray-900">{coin.market_cap_rank}</td>
+                    sortedCoins.map(coin => (
+                      <tr key={coin.id} className={`hover:${darkMode ? 'bg-gray-700' : 'bg-gray-50'} transition-colors`}>
+                        <td className="px-4 py-3 text-sm font-medium">{coin.market_cap_rank}</td>
                         <td className="px-4 py-3">
-                          <div className="flex items-center gap-2">
-                            <div className="w-6 h-6 bg-gray-200 border-2 border-dashed rounded-full" />
+                          <div className="flex items-center gap-3">
+                            <div className="w-8 h-8 bg-gray-300 dark:bg-gray-600 rounded-full border-2 border-dashed" />
                             <div>
-                              <div className="text-sm font-medium text-gray-900">{coin.name}</div>
-                              <div className="text-xs text-gray-500 uppercase">{coin.symbol}</div>
+                              <div className="font-semibold">{coin.name}</div>
+                              <div className="text-xs uppercase text-gray-500 dark:text-gray-400">{coin.symbol}</div>
                             </div>
                           </div>
                         </td>
-                        <td className="px-4 py-3 text-sm text-right font-medium text-gray-900">
-                          {formatPrice(coin.current_price)}
+                        <td className="px-4 py-3 text-sm text-right font-semibold">{formatPrice(coin.current_price)}</td>
+                        <td className={`px-4 py-3 text-sm text-right font-medium ${getChangeClass(coin.price_change_15m, '15m')}`}>
+                          {coin.price_change_15m !== null ? coin.price_change_15m.toFixed(2) : '-'}%
                         </td>
-                        <td className={`px-4 py-3 text-sm text-right ${getChangeClass(coin.price_change_percentage_1h_in_currency, '1h')}`}>
+                        <td className={`px-4 py-3 text-sm text-right font-medium ${getChangeClass(coin.price_change_percentage_1h_in_currency, '1h')}`}>
                           {coin.price_change_percentage_1h_in_currency?.toFixed(2) ?? '-'}%
                         </td>
-                        <td className={`px-4 py-3 text-sm text-right ${getChangeClass(coin.price_change_percentage_24h_in_currency, '24h')}`}>
+                        <td className={`px-4 py-3 text-sm text-right font-medium ${getChangeClass(coin.price_change_4h, '4h')}`}>
+                          {coin.price_change_4h !== null ? coin.price_change_4h.toFixed(2) : '-'}%
+                        </td>
+                        <td className={`px-4 py-3 text-sm text-right font-medium ${getChangeClass(coin.price_change_percentage_24h_in_currency, '24h')}`}>
                           {coin.price_change_percentage_24h_in_currency?.toFixed(2) ?? '-'}%
                         </td>
-                        <td className={`px-4 py-3 text-sm text-right ${getChangeClass(coin.price_change_percentage_7d_in_currency, '7d')}`}>
+                        <td className={`px-4 py-3 text-sm text-right font-medium ${getChangeClass(coin.price_change_percentage_7d_in_currency, '7d')}`}>
                           {coin.price_change_percentage_7d_in_currency?.toFixed(2) ?? '-'}%
                         </td>
-                        <td className="px-4 py-3 text-sm text-right text-gray-600">
-                          {formatMarketCap(coin.market_cap)}
-                        </td>
-                        <td className="px-4 py-3 text-sm text-right text-gray-600">
-                          {formatMarketCap(coin.total_volume)}
-                        </td>
+                        <td className="px-4 py-3 text-sm text-right font-medium">{formatMarketCap(coin.market_cap)}</td>
+                        <td className="px-4 py-3 text-sm text-right font-medium">{formatMarketCap(coin.total_volume)}</td>
                       </tr>
                     ))
                   )}
@@ -211,8 +269,8 @@ export default function BitEyeScanner() {
             </div>
           </div>
 
-          <div className="mt-6 text-center text-xs text-gray-500">
-            Data from CoinGecko • Updates every 60 seconds • Top 500 by market cap
+          <div className="mt-6 text-center text-xs text-gray-500 dark:text-gray-400">
+            Data: CoinGecko • 15m & 4h calculated from sparkline • Instant • Sweden
           </div>
         </div>
       </div>
